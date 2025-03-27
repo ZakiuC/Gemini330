@@ -17,11 +17,6 @@ namespace VideoStreamer
             dir += '/';
         }
 
-        // // 构造FFmpeg所需的输入文件列表字符串
-        // std::string inputList;
-        // for (const auto &f : inputFiles)
-        //     inputList += "file '" + f + "'\n"; // 为每个输入文件生成合适的FFmpeg格式
-
         // 检查 tempDir 是否存在，不存在则创建
         if (mkdir(config.tempDir.c_str(), 0755) != 0)
         {
@@ -44,24 +39,60 @@ namespace VideoStreamer
         pid_t pid = fork(); // 创建子进程
         if (pid == 0)       // 子进程执行编码操作
         {
-            // 使用execlp调用FFmpeg进行视频合并和编码
-            execlp(config.ffmpegPath.c_str(), "ffmpeg",
-                   "-y",                    // 覆盖输出文件
-                   "-f", "concat",          // 输入格式为concat（连接多个视频）
-                   "-safe", "0",            // 允许不安全的文件路径
-                   "-i", listFile.c_str(),  // 输入文件列表
-                   "-c:v", "libx264",       // 使用H.264编码器
-                   "-b:v", "3M",            // 设置视频比特率为3Mbps
-                   "-g", "15",              // 设置关键帧间隔为15
-                   "-profile:v", "high422", // 设置H.264的profile为high422
-                   "-f", "h264",            // 设置输出格式为h264
-                   outputFile.c_str(),      // 输出文件路径
-                   nullptr);                // 参数结尾
+            if (config.rtmpUrl.empty())
+            {
+                // 仅生成H264文件
+                execlp(config.ffmpegPath.c_str(), "ffmpeg",
+                       "-y",
+                       "-f", "concat",
+                       "-safe", "0",
+                       "-i", listFile.c_str(),
+                       "-c:v", "libx264",
+                       "-b:v", "3M",
+                       "-g", "15",
+                       "-profile:v", "high422",
+                       "-f", "h264",
+                       outputFile.c_str(),
+                       nullptr);
+            }
+            else
+            {
+                // 同时输出到文件和RTMP
+                // std::string teeOutput = "[f=h264]" + outputFile + "|[f=flv]" + config.rtmpUrl;
+                // execlp(config.ffmpegPath.c_str(), "ffmpeg",
+                //        "-y", "-loglevel", "debug",
+                //        "-f", "concat",
+                //        "-safe", "0",
+                //        "-i", listFile.c_str(),
+                //        "-c:v", "libx264",
+                //        "-b:v", "3M",
+                //        "-g", "15",
+                //        "-profile:v", "high422",
+                //        "-map", "0:v", "-an",
+                //        "-f", "tee",
+                //        teeOutput.c_str(),
+                //        nullptr);
+
+                // 仅输出到RTMP
+                execlp(config.ffmpegPath.c_str(), "ffmpeg",
+                       "-y",
+                       "-f", "concat",
+                       "-safe", "0",
+                       "-i", listFile.c_str(),
+                       "-c:v", "libx264",
+                       "-b:v", "3M",
+                       "-g", "15",
+                       "-profile:v", "high422",
+                       "-map", "0:v", "-an",
+                       "-f", "flv",
+                       config.rtmpUrl.c_str(),
+                       nullptr);
+            }
 
             exit(EXIT_FAILURE); // 如果execlp失败，则退出子进程
         }
         int status;
-        waitpid(pid, nullptr, 0);               // 父进程等待子进程执行完毕
+        waitpid(pid, &status, 0);               // 父进程等待子进程执行完毕
         if (std::remove(listFile.c_str()) != 0) // 删除临时文件
         {
             std::cerr << "[VideoEncoder] 无法删除文件 '" << listFile << "': " << strerror(errno) << std::endl;
@@ -137,6 +168,32 @@ namespace VideoStreamer
             break;
         }
         }
+    }
+
+    void VideoEncoder::encodeRealtime(const std::shared_ptr<ob::ColorFrame> &frame)
+    {
+        pid_t pid = fork();
+        if (pid == 0)
+        {
+            // 使用管道直接传递帧数据给FFmpeg
+            execlp(config.ffmpegPath.c_str(), "ffmpeg",
+                   "-y",
+                   "-f", "rawvideo",
+                   "-pix_fmt", "rgb24", // 根据实际帧格式调整
+                   "-s", std::to_string(config.targetWidth) + "x" + std::to_string(config.targetHeight).c_str(),
+                   "-i", "pipe:0", // 从标准输入读取
+                   "-c:v", "libx264",
+                   "-preset", "ultrafast",
+                   "-tune", "zerolatency",
+                   "-f", "flv",
+                   config.rtmpUrl.c_str(),
+                   nullptr);
+
+            // 写入帧数据到标准输出
+            write(STDOUT_FILENO, frame->data(), frame->dataSize());
+            exit(EXIT_FAILURE);
+        }
+        // 注意：需要添加更完善的管道管理和错误处理
     }
 
     bool VideoEncoder::getFileInfo(const std::string &path, FileInfo &info)

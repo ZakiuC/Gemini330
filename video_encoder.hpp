@@ -25,6 +25,8 @@ namespace VideoStreamer
          */
         void encode(const std::vector<std::string> &inputFiles,
                     const std::string &outputFile);
+        
+        void encodeRealtime(const std::shared_ptr<ob::ColorFrame>& frame);
 
     private:
         /**

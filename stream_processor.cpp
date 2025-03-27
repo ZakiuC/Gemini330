@@ -17,7 +17,12 @@ namespace VideoStreamer
     {
         running = true;        // 设置为运行状态
         setupUploadWorkers();  // 设置上传工作线程
-        startProcessingLoop(); // 启动视频处理循环
+
+        if (config.enableRealtimeStream) {
+            workers.emplace_back(&StreamProcessor::processRealtimeStream, this);
+        } else {
+            startProcessingLoop();  // 启动视频处理循环
+        }
     }
 
     void StreamProcessor::stop()
@@ -174,6 +179,22 @@ namespace VideoStreamer
             if (file.empty())
                 break;
             std::remove(file.c_str());
+        }
+    }
+
+    void StreamProcessor::processRealtimeStream() {
+        try {
+            VideoEncoder realtimeEncoder(config);
+            
+            while (running) {
+                if (auto frame = camera.getFrame(500)) {  // 更短的超时时间
+                    auto tmpFile = saveTempFrame(frame);
+                    realtimeEncoder.encode({tmpFile}, ""); // 空输出文件表示只推流
+                    manageFrameQueue(tmpFile);
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[Realtime] 推流错误: " << e.what() << std::endl;
         }
     }
 } // namespace VideoStreamer

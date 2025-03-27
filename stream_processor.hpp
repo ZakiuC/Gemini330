@@ -85,6 +85,8 @@ namespace VideoStreamer
          */
         void clearTempFiles();
 
+        void processRealtimeStream();
+
         // 配置参数
         AppConfig config;
 
